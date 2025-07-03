@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% load static %}
+{% block content %}
+
+{% if user.is_authenticated%}
+    {# --- 검색바 추가 --- #}
+    <div class="search-bar">
+        <input type="text" id="searchInput" placeholder="검색어를 입력하세요.">
+        <button id="searchBtn" class="btn">검색</button>
+    </div>    
+    {# --- 검색바끝 --- #}
+    
+    <div class="todocontainer"></div>
+    <div class="pagination"></div>
+    <button class="todoCreate" id="createBtn"> Todo 등록하기</button>
+{%else%} 
+    <p>할 일 목록은 로그인 후에 확인하실 수 있습니다.</p>
+{%endif%}
+
+<script>
+    let currentPage = 1;
+    let currentSearch = "";
+    
+    document.addEventListener("DOMContentLoaded", init);
+    
+    function init() {
+        UIEvents();
+        loadTodoList(1);
+    }
+    
+    function UIEvents() {
+        document.getElementById("createBtn").addEventListener("click", () => {
+            window.location.href = "/todo/create/";
+        });
+    
+        document.getElementById("searchBtn").addEventListener("click", () => {
+            currentSearch = document.getElementById("searchInput").value.trim();
+            loadTodoList(1);
+        });
+    }
+    
+    function loadTodoList(page) {
+        currentPage = page;
+        fetchTodoData(currentPage, currentSearch)
+            .then(data => {
+                const todos = extractTodoArray(data);
+                renderTodoList(todos);
+                renderPagination(data, page);
+            })
+            .catch(err => console.error('리스트 로드 실패', err));
+    }
+    
+    function fetchTodoData(page, search = "") {
+        return axiosInstance.get(`/todo/viewsets/view/`, { params: { page, search } })
+            .then(res => res.data);
+    }
+    
+    function extractTodoArray(data) {
+        if (Array.isArray(data)) return data;
+        if (Array.isArray(data.data)) return data.data;
+        return [];
+    }
+    
+    function renderTodoList(todos) {
+        const container = document.querySelector(".todocontainer");
+        container.innerHTML = "";
+        todos.forEach(todo => container.appendChild(createTodoElement(todo)));
+    }
+    
+    function createTodoElement(todo) {
+        const div = document.createElement("div");
+        div.className = "todo-item";
+        div.dataset.id = todo.id;
+    
+        if (todo.complete) div.classList.add("completed");
+    
+        div.addEventListener("click", () => detailView(todo.id));
+    
+        div.innerHTML = `
+            <p><strong>Name:</strong> ${todo.name}</p>
+            <p><strong>Description:</strong> ${todo.description}</p>
+            <p><strong>Complete:</strong> ${todo.complete}</p>
+            <p><strong>Completed At:</strong> ${datetimeToString(todo.completed_at)}</p>
+            <p><strong>Experience Points:</strong> ${todo.exp}</p>
+            <p><strong>Image:</strong><br> ${todo.image ? `<img src="${todo.image}" alt="${todo.image}" width="150">` : ""}</p>
+            <button class="completeBtn">완료</button>
+            <button class="social-btn commentToggleBtn">
+                <span class="icon">💬</span>
+                <span class="count">${todo.comment_count || 0}</span>
+            </button>
+            <button class="social-btn bookmarkBtn" data-id="${todo.id}">
+                <span class="icon">🔖</span>
+                <span class="count">${todo.bookmark_count}</span>
+            </button>
+            <button class="social-btn likeBtn" data-id="${todo.id}"><span class="icon">${todo.is_liked ? '💔' : '❤️'}</span> <span class="count">${todo.like_count}</span></button>
+            <button class="social">
+                <a href="/interaction/todo/detail/${todo.id}/" target="_blank" class="detail-link">MY댓글</a>
+            </button>
+            <div class="commentBox" style="display:none;">
+                <ul class="commentList"></ul>
+                <input type="text" class="commentInput" placeholder="댓글을 입력하세요">
+                <button class="commentSubmit">등록</button>
+            </div>
+            <hr>
+        `;
+    
+        div.querySelector(".completeBtn").addEventListener("click", e => {
+            e.stopPropagation();
+            toComplete(todo.id);
+        });
+    
+        div.querySelector(".commentSubmit").addEventListener("click", e => {
+            e.stopPropagation();
+            const commentInput = div.querySelector(".commentInput");
+            const content = commentInput.value;
+            if (content.trim()) {
+                postComment(todo.id, content, div);
+                commentInput.value = '';
+            }
+        });
+    
+        div.querySelector(".commentToggleBtn").addEventListener("click", e => {
+            e.stopPropagation();
+            const commentBox = div.querySelector(".commentBox");
+            const commentList = div.querySelector(".commentList");
+            commentBox.style.display = (commentBox.style.display === "none") ? "block" : "none";
+            loadComments(todo.id, commentList);
+        });
+    
+        div.querySelector(".bookmarkBtn").addEventListener("click", function (e) {
+            e.stopPropagation();
+            toggleBookmark(this.dataset.id);
+        });
+    
+        div.querySelector(".commentInput").addEventListener("click", e => e.stopPropagation());
+    
+
+
+
+        div.querySelectorAll('.likeBtn').forEach(btn => {
+            btn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                toggleLike(btn.dataset.id); // "data-id" 속성에 담긴 값을 인자로 전달해서 toggleLike() 함수를 실행하라.
+            });
+        });
+
+        
+
+        return div;
+    }
+    
+    function toComplete(id) {
+        axiosInstance.patch(`/todo/viewsets/view/${id}/`, { complete: true })
+            .then(() => loadTodoList(currentPage))
+            .catch(err => console.error("완료 처리 실패:", err));
+    }
+    
+    function detailView(id) {
+        window.open(
+            `/interaction/todo/detail/${id}/`,
+            '_blank',
+            'width=600,height=600,top=100,left=200,scrollbars=yes,resizable=yes'
+        );
+    }
+    
+    function renderPagination(data, currentPage) {
+        const wrapper = document.querySelector('.pagination');
+        wrapper.innerHTML = '';
+        const totalPages = data.page_count;
+    
+        const prevBtn = document.createElement('button');
+        prevBtn.innerText = '‹';
+        prevBtn.disabled = !data.previous;
+        prevBtn.addEventListener('click', () => loadTodoList(currentPage - 1));
+        wrapper.appendChild(prevBtn);
+    
+        for (let i = 1; i <= totalPages; i++) {
+            const btn = document.createElement('button');
+            btn.innerText = i;
+            if (i === currentPage) btn.classList.add('active');
+            if (i === currentPage) btn.disabled = true;
+            btn.addEventListener('click', () => loadTodoList(i));
+            wrapper.appendChild(btn);
+        }
+    
+        const nextBtn = document.createElement('button');
+        nextBtn.innerText = '›';
+        nextBtn.disabled = !data.next;
+        nextBtn.addEventListener('click', () => loadTodoList(currentPage + 1));
+        wrapper.appendChild(nextBtn);
+    }
+    
+    function loadComments(todoId, listElement) {
+        axiosInstance.get(`/interaction/comments/`, { params: { todo_pk: todoId } })
+            .then(res => {
+                const payload = Array.isArray(res.data) ? res.data :
+                    Array.isArray(res.data.results) ? res.data.results :
+                        (res.data.data || []);
+    
+                listElement.innerHTML = '';
+                payload.forEach(c => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `${c.username || '익명'}: ${c.content} 
+                        <button class="comment-like-btn" data-id="${c.id}">👍 ${c.like_count}</button>`;
+                    li.querySelector('.comment-like-btn')?.addEventListener('click', e => {
+                        e.stopPropagation();
+                        toggleCommentLike(c.id);
+                    });
+                    listElement.appendChild(li);
+                });
+    
+                const countEl = listElement.closest(".todo-item").querySelector('.commentToggleBtn .count');
+                if (countEl) countEl.textContent = payload.length;
+            })
+            .catch(err => console.error('댓글 로드 실패:', err));
+    }
+    
+    function postComment(todoId, content, todoDiv) {
+        axiosInstance.post('/interaction/comments/', {
+            todo_pk: todoId,
+            content: content
+        })
+            .then(() => {
+                const commentList = todoDiv.querySelector('.commentList');
+                loadComments(todoId, commentList);
+            })
+            .catch(err => console.error("댓글 등록 실패:", err));
+    }
+    
+    function toggleCommentLike(commentId) {
+        axiosInstance.post(`/interaction/commentlikes/${commentId}/toggle/`)
+            .then(res => {
+                const btn = document.querySelector(`.comment-like-btn[data-id="${commentId}"]`);
+                if (btn) btn.innerHTML = `👍 ${res.data.like_count}`;
+            })
+            .catch(err => console.error("댓글 좋아요 실패:", err));
+    }
+    
+    function toggleBookmark(id) {
+        axiosInstance.post(`/interaction/bookmarks/${id}/toggle/`)
+            .then(res => {
+                const { is_bookmarked, bookmark_count } = res.data;
+                const btn = document.querySelector(`.bookmarkBtn[data-id="${id}"]`);
+                if (btn) btn.innerHTML = `🔖 <span class="count">${bookmark_count}</span>`;
+            })
+            .catch(err => console.error('북마크 토글 실패:', err));
+    }
+    
+
+
+
+
+    function toggleLike(id) {
+        axiosInstance.post(`/api/interaction/likes/${id}/toggle/`)
+            .then(res => {
+                const { is_liked, like_count } = res.data;
+                const btn = document.querySelector(`.likeBtn[data-id="${id}"]`);
+                if (btn) btn.innerHTML = `${is_liked ? '💔' : '❤️'} <span class="count">${like_count}</span>`;
+            })
+            .catch(err => console.error(" 좋아요 토글 실패:", err));
+    }
+</script>  
+{% endblock %}
+  
